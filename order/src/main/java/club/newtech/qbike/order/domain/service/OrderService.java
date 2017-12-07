@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Date;
+import java.util.List;
 import java.util.concurrent.DelayQueue;
 import java.util.stream.Collectors;
 
@@ -31,7 +32,6 @@ public class OrderService {
     UserRibbonHystrixApi userService;
     @Autowired
     private RedisTemplate<String, String> redisTemplate;
-    private DelayQueue<IntentionVo> intentions = new DelayQueue<>();
     @Autowired
     private OrderRepository orderRepository;
     @Autowired
@@ -42,54 +42,14 @@ public class OrderService {
     }
 
 
-    public void put(IntentionVo intentionVo) {
-        LOGGER.info(String.format("put a vo %s to queue", intentionVo));
-        this.intentions.put(intentionVo);
-    }
-
-    @Async
-    public void handleIntention() {
-        LOGGER.info("start handling intention loop");
-        for (; ; ) {
-            try {
-                IntentionVo intentionVo = intentions.take();
-                if (intentionVo != null) {
-                    LOGGER.info(String.format("get a vo %s", intentionVo));
-                    Circle circle = new Circle(new Point(intentionVo.getStartLong(), intentionVo.getStartLat()), //
-                            new Distance(500, RedisGeoCommands.DistanceUnit.METERS));
-                    GeoResults<RedisGeoCommands.GeoLocation<String>> result =
-                            redisTemplate.opsForGeo().geoRadius("Drivers", circle);
-                    if (result.getContent().size() == 0) {
-                        LOGGER.info("{} 没找到匹配, 放入队列重新等待", intentionVo.getCustomerId());
-                        IntentionVo newVo = new IntentionVo(intentionVo.getCustomerId(),
-                                intentionVo.getStartLong(), intentionVo.getStartLat(),
-                                intentionVo.getDestLong(), intentionVo.getDestLat(),
-                                intentionVo.getMid(),
-                                2000L);
-                        intentions.put(newVo);
-                    } else {
-                        LOGGER.info("获取附近司机为{} 目前的策略为取首位",
-                                result.getContent().stream()
-                                        .map(x -> x.getContent().getName())
-                                        .collect(Collectors.joining(",")));
-                        String driverId = result.getContent().get(0).getContent().getName();
-                        LOGGER.info("{} 匹配到的司机ID为 {}", intentionVo.getCustomerId(), driverId);
-                        createOrder(intentionVo, driverId);
-                    }
-                }
-            } catch (InterruptedException e) {
-                LOGGER.error("Error happended", e);
-            }
-        }
-    }
 
     @Transactional
-    protected void createOrder(IntentionVo intention, String driverId) {
+    protected Order createOrder(IntentionVo intention) {
         //在调用远程user服务获取用户信息的时候，必须有熔断，否则在事务中很危险
         Order order = new Order();
         order.setOid(generateOrderId());
-        CustomerVo customerVo = userService.findCustomerById(Integer.parseInt(intention.getCustomerId()));
-        DriverVo driverVo = userService.findDriverById(Integer.parseInt(driverId));
+        CustomerVo customerVo = userService.findCustomerById(intention.getCustomerId());
+        DriverVo driverVo = userService.findDriverById(intention.getDriverId());
         order.setCustomer(customerVo);
         order.setDriver(driverVo);
         order.setOrderStatus(Status.OPENED);
@@ -98,14 +58,12 @@ public class OrderService {
         order.setStartLat(intention.getStartLat());
         order.setDestLong(intention.getDestLong());
         order.setDestLat(intention.getDestLat());
-        order.setIntentionId(intention.getMid());
+        order.setIntentionId(String.valueOf(intention.getIntentionId()));
         orderRepository.save(order);
+        return order;
     }
 
-    @Transactional
-    public void handlePosition(int driverId, double longitude, double latitude) {
-        LOGGER.info("start handling position update");
-        redisTemplate.opsForGeo().geoAdd("Drivers", new Point(longitude, latitude), String.valueOf(driverId));
-    }
+
+
 
 }

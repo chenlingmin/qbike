@@ -10,12 +10,20 @@ spring:
       ddl-auto: update
   datasource:
     driver-class-name: com.mysql.jdbc.Driver
-    url: jdbc:mysql://127.0.0.1:3306/qbike
+    url: jdbc:mysql://127.0.0.1:3306/qbike?useUnicode=true&characterEncoding=utf8
     username: root
     password:
     tomcat:
       max-active: 3
       min-idle: 1
+  redis:
+    host: localhost
+    timeout: 2000
+    database: 2
+    pool:
+      max-active: 20
+      min-idle: 1
+      max-idle: 5
 logging:
   level:
     root: INFO
